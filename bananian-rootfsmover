@@ -1,0 +1,125 @@
+#!/bin/bash
+
+# The MIT License (MIT)
+#
+# Copyright (c) 2015 Oliver Beck <hirnwunde@mail.de>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+
+# Version 0.1 - 20150118
+
+DIALOG=${DIALOG=dialog --ascii-lines}
+
+tempfile=`tempfile 2>/dev/null` || tempfile=/tmp/r2h$$
+trap "rm -f $tempfile" 0 1 2 5 15
+
+choosedevice() {
+	
+	var=`lsblk -e 1,179 -Pdn -o name | sed -e 's/NAME=\"/\/dev\//' |sed -e 's/\"/\ -/'`
+	$DIALOG --menu "Please choose the device, where the rootfs should go" 15 75 5 $var 2>$tempfile
+	TARDEV=`cat $tempfile`
+
+	case $TARDEV in
+		"/dev/sd"*)	askifformat;;
+		*) echo "aborted";;
+	esac
+
+}
+
+askifformat() {
+
+	$DIALOG --yesno "$TARDEV"' will be repartitioned and formated.\nAll data will be lost!\nAre you realy sure?' 15 50
+	response=$?
+	case $response in
+		0) dd if=/dev/zero of=$TARDEV bs=512 count=1; askifswap;;
+		*) choosedevice;;
+	esac
+
+}
+
+askifswap() {
+
+	$DIALOG --yesno "Should be created a swap partition (1GB) on $TARDEV?" 0 0
+	response=$?
+	case $response in
+		0) createwithswap ;;
+		1) createwithoutswap ;;
+		*) choosedevice ;;
+	esac
+
+}
+
+createwithswap() {
+	parted -s $TARDEV mklabel msdos
+    parted -s -a optimal $TARDEV mkpart primary linux-swap 0% 1024M
+    parted -s -a optimal $TARDEV mkpart primary ext2 1025 100%
+	mkswap ${TARDEV}1
+	mkfs.ext4 ${TARDEV}2
+
+	mountandcopy 1
+	changeUEnv 1
+}
+
+createwithoutswap() {
+	parted -s $TARDEV mklabel msdos
+    parted -s -a optimal $TARDEV mkpart primary ext2 0% 100%
+	mkfs.ext4 ${TARDEV}1
+
+	mountandcopy 0
+	changeUEnv 0
+}
+
+mountandcopy() {
+
+	mkdir /mnt/newroot
+
+	if [ $1 == "1" ]; then
+		mount ${TARDEV}2 /mnt/newroot
+	fi
+	
+	if [ $1 == "0" ]; then
+		mount ${TARDEV}1 /mnt/newroot
+	fi
+
+	$DIALOG --prgbox "rsync'ing rootfs ..." "./rsync-helper.sh" 20 77
+	#rsync -ahPHAXx --delete --exclude={/dev/*,/proc/*,/sys/*,/tmp/*,/run/*,/mnt/*,/media/*,/lost+found} / /mnt/newroot
+	umount /mnt/newroot
+}
+
+changeUEnv() {
+	
+	mkdir /tmp/tmpboot
+	mount /dev/mmcblk0p1 /tmp/tmpboot
+	mv /tmp/tmpboot/uEnv.txt /tmp/tmpboot/uEnv.r2h
+	
+	if [ $1 == "1" ]; then
+		cat /tmp/tmpboot/uEnv.r2h | sed -e 's/\/dev\/mmcblk0p2/\${TARDEV}2/' >/tmp/tmpboot/uEnv.txt
+	fi
+	
+	if [ $1 == "0" ]; then
+		cat /tmp/tmpboot/uEnv.r2h | sed -e 's/\/dev\/mmcblk0p2/\${TARDEV}1/' >/tmp/tmpboot/uEnv.txt
+	fi
+	
+	cp /tmp/tmpboot/uEnv.r2h /tmp/tmpboot/uEnv.txt
+	umount /tmp/tmpboot
+	rmdir /tmp/tmpboot
+
+}
+
+choosedevice
