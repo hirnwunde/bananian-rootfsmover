@@ -15,5 +15,5 @@ This should belong to every Distro.
 
 ## TODO:
  - compute blocks of HDD/USB-Stick for better alignment and positioning of partitions
- - use UUIDs instead of /dev/sdXN
+ - use UUIDs instead of /dev/sdXN ("root=UUID=[Partition unique GUID]")
  - more testing
